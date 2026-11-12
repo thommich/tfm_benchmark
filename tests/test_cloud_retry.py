@@ -20,6 +20,9 @@ def test_oom_phase_and_non_oom_failure_classification():
                             logs="Downloading checkpoint from HuggingFace; out of memory warning").kind == "unknown"
     assert classify_failure(description={"FailureReason": "AlgorithmError"},
                             logs="CUDA out of memory").kind == "oom"
+    unrelated = classify_failure(description={"FailureReason": "AlgorithmError: container exited 1"},
+                                 logs="Downloading checkpoint from HuggingFace\nAttributeError: bad method")
+    assert unrelated.kind == "unknown" and "AttributeError" in unrelated.reason
 
 
 def test_context_preserved_until_attempt_four_and_retry_limit():

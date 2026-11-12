@@ -20,6 +20,8 @@ def render_report(plan: RunPlan, results: list[dict[str, Any]], run_id: str) -> 
         license_text = _s(result.get("license") or "Unknown")
         if result.get("attribution_required"):
             license_text += " · attribution required"
+        if result["name"] == "TabPFN":
+            license_text += " · Built with PriorLabs-TabPFN"
         rows.append(
             f"<tr><td>{rank}</td><td><strong>{_s(result['name'])}</strong></td>"
             f"<td class='num'>{result['gini']:.4f}</td><td class='num'>{result['auc']:.4f}</td>"

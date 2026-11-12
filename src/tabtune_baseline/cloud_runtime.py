@@ -6,6 +6,7 @@ import hashlib
 import json
 import tempfile
 import time
+from threading import Event, Thread
 from dataclasses import asdict
 from datetime import datetime, timezone
 from importlib.resources import files
@@ -45,6 +46,7 @@ def _run_uri(plan: SageMakerPlan) -> str:
 
 
 def _event(state: dict, store: S3RunStore, kind: str, **fields: Any) -> None:
+    store.assert_lease()
     item = {"at": datetime.now(timezone.utc).isoformat(), "event": kind, **fields}
     print(json.dumps(item, default=str), flush=True)
     previous = store.maybe_bytes("events.jsonl") or b""
@@ -95,10 +97,11 @@ def _read_output(store: S3RunStore, session, name: str, number: int,
 
 def _drive(plan: SageMakerPlan, state: dict, store: S3RunStore,
            session, output_dir: Path) -> CloudBenchmarkResult:
+    store.assert_lease()
     account = inspect_account(plan.cloud, session=session)
     adapter = SageMakerAdapter(plan.cloud, session)
     layout = CloudOutputLayout(store.run_uri)
-    persist = lambda value: store.put_json("state.json", value)
+    persist = store.put_state
     emit = lambda kind, **fields: _event(state, store, kind, **fields)
     reconcile_submission_intents(state, adapter, persist, emit)
     tokens = restore_tokens(plan, state, account)
@@ -106,12 +109,14 @@ def _drive(plan: SageMakerPlan, state: dict, store: S3RunStore,
     persist(state)
 
     def stage_attempt(name, number, model_plan):
+        store.assert_lease()
         store.put_json(f"attempts/{name}/{number}/attempt.json",
                        {"plan_identity": plan.identity, "dataset_sha256": state["dataset_sha256"],
                         "model": name, "number": number, "model_plan": model_plan})
 
     class Submitter:
         def submit(self, name, number, job, instance_type):
+            store.assert_lease()
             return adapter.submit(layout, model=name, number=number,
                                   job_name=job, instance_type=instance_type)
 
@@ -121,7 +126,7 @@ def _drive(plan: SageMakerPlan, state: dict, store: S3RunStore,
     submitter = Submitter()
     last_status = 0.0
     while any(record["status"] in {"pending", "running"} for record in state["models"].values()):
-        store.renew_lease()
+        store.assert_lease()
         orchestrator_step(plan, state, tokens, submitter, stage_attempt,
                           lambda name, number, description: _read_output(store, session, name, number, description),
                           persist, emit)
@@ -147,12 +152,14 @@ def launch_run(df: pd.DataFrame, plan: SageMakerPlan, output_dir: Path) -> Cloud
     inspect_account(plan.cloud, session=session)
     store = S3RunStore(session.client("s3"), _run_uri(plan), kms_key_id=plan.cloud.kms_key_id)
     _wait_for_lease(store, plan.cloud.poll_seconds)
+    heartbeat = _LeaseHeartbeat(store)
+    heartbeat.start()
     try:
         if store.maybe_bytes("state.json") is not None:
             stored_plan = SageMakerPlan.from_dict(store.get_json("plan.json"))
             if stored_plan.identity != plan.identity:
                 raise ValueError("Existing run plan differs from the requested plan")
-            state = store.get_json("state.json")
+            state = store.get_state()
             if state["status"] == "terminal":
                 from .cloud_artifacts import finalize_run
                 return finalize_run(plan, state, store, output_dir)
@@ -168,9 +175,10 @@ def launch_run(df: pd.DataFrame, plan: SageMakerPlan, output_dir: Path) -> Cloud
             store.put_json("plan.json", plan.to_dict())
             entry = files("tabtune_baseline").joinpath("processing_entry.py").read_bytes()
             store.put_bytes("staged/processing_entry.py", entry)
-            store.put_json("state.json", state)
+            store.put_state(state)
         return _drive(plan, state, store, session, output_dir)
     finally:
+        heartbeat.stop()
         store.release_lease()
 
 
@@ -180,8 +188,10 @@ def resume_run(run_uri: str, output_dir: Path) -> CloudBenchmarkResult:
     plan = SageMakerPlan.from_dict(store.get_json("plan.json"))
     store.kms_key_id = plan.cloud.kms_key_id
     _wait_for_lease(store, plan.cloud.poll_seconds)
+    heartbeat = _LeaseHeartbeat(store)
+    heartbeat.start()
     try:
-        state = store.get_json("state.json")
+        state = store.get_state()
         if state["run_id"] != plan.run_id or state["plan_identity"] != plan.identity:
             raise ValueError("S3 run state and reviewed plan identity disagree")
         if state["status"] == "terminal":
@@ -189,6 +199,7 @@ def resume_run(run_uri: str, output_dir: Path) -> CloudBenchmarkResult:
             return finalize_run(plan, state, store, output_dir)
         return _drive(plan, state, store, session, output_dir)
     finally:
+        heartbeat.stop()
         store.release_lease()
 
 
@@ -202,3 +213,26 @@ def _wait_for_lease(store: S3RunStore, poll_seconds: int) -> None:
                       for status in ("pending", "running", "completed", "failed", "blocked")}
             print(json.dumps({"event": "monitoring", "run_uri": store.run_uri, **counts}), flush=True)
         time.sleep(poll_seconds)
+
+
+class _LeaseHeartbeat:
+    def __init__(self, store: S3RunStore, interval: int = 30):
+        self.store = store
+        self.interval = interval
+        self.stop_event = Event()
+        self.thread = Thread(target=self._run, name="tabtune-lease-heartbeat", daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self.thread.join()
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(self.interval):
+            try:
+                self.store.renew_lease()
+            except Exception as exc:
+                self.store.lease_failure = exc
+                return

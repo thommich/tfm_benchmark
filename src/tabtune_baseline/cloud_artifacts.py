@@ -63,7 +63,7 @@ def finalize_run(plan: SageMakerPlan, state: dict, store, output_dir: Path) -> C
         if not state.get("staged_input_deleted"):
             store.delete("staged/input.parquet")
             state["staged_input_deleted"] = True
-            store.put_json("state.json", state)
+            store.put_state(state)
         result = _benchmark_result(run_dir, payload["models"])
         return CloudBenchmarkResult(store.run_uri, "completed", result,
                                     {name: item["status"] for name, item in state["models"].items()})
@@ -125,11 +125,11 @@ def finalize_run(plan: SageMakerPlan, state: dict, store, output_dir: Path) -> C
         for name in ("results.json", "manifest.json", "report.html", "events.jsonl"):
             store.upload_file(name, run_dir / name)
         state["artifacts_finalized"] = True
-        store.put_json("state.json", state)
+        store.put_state(state)
         # This deletion is strictly after all final artifacts exist in Studio and S3.
         store.delete("staged/input.parquet")
         state["staged_input_deleted"] = True
-        store.put_json("state.json", state)
+        store.put_state(state)
         result = _benchmark_result(run_dir, models)
         return CloudBenchmarkResult(store.run_uri, "completed", result,
                                     {name: item["status"] for name, item in state["models"].items()})

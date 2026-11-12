@@ -48,10 +48,11 @@ the full benchmark before the one-model result passes these checks.
 - In CloudWatch, verify CUDA sees the expected GPU and the worker reaches
   snapshot validation, fit, predict, and completion. Verify outbound checkpoint
   access from the **job role/network**, not merely from Studio. Confirm TabPFN
-  loads v2 weights (`Prior-Labs/TabPFN-v2`), never v2.5, and records a local
+  loads v2 classifier weights (`Prior-Labs/TabPFN-v2-clf`, described as
+  `Prior-Labs/TabPFN-v2` in the registry), never v2.5, and records a local
   checkpoint SHA-256. If the checkpoint cannot be obtained, the job must fail;
   it must not report a completed result with random weights. The report must
-  retain the v2 attribution requirement.
+  display the required `Built with PriorLabs-TabPFN` attribution.
 - Check that TabPFN and ILTM cache paths, when used, resolve under
   `/opt/ml/processing/checkpoints`. On a later TabICLv2 run with KV cache,
   confirm disk offload uses `/opt/ml/processing/scratch/tabiclv2_kv`, does not
@@ -63,7 +64,9 @@ the full benchmark before the one-model result passes these checks.
 - Confirm `results.json`, `manifest.json`, `report.html`, `events.jsonl`, and
   every successful score file exist both in the private S3 run prefix and the
   requested Studio output directory. Confirm the staged input is deleted only
-  after final artifacts are copied. Failed runs must retain it for resume.
+  after final artifacts are copied. An interrupted or incomplete final copy
+  must retain it for resume; a finalized terminal run, including one whose
+  models failed, deletes it.
 
 ## 3. Resume and failure evidence
 
@@ -76,13 +79,16 @@ against the same run. Record the original and resumed job names.
   the lease. It must not create another job for an existing attempt. Resume must
   preserve the KMS key and count only this run's jobs that are still active when
   subtracting from account quota. A job that finished during the restart must
-  reconcile as terminal before new dispatch.
+  reconcile as terminal before new dispatch. Verify the lease renews during a
+  slow preflight or scheduler step; if ownership is lost, stale state writes
+  and job submissions must stop.
 - For any natural failure, compare `error.json`, SageMaker `FailureReason`,
   `cloudwatch.log`, state, events, and the final report. The short failure class
   and message must describe the actual exception; routine Hugging Face or
   memory-estimation startup messages must not turn an unrelated exception into
-  a checkpoint or OOM failure. The full 20 KB log tail should be retained once
-  under that attempt, not copied into state or HTML.
+  a checkpoint or OOM failure. A captured CloudWatch excerpt (up to 20 KB from
+  at most 200 events per stream) should be retained under that attempt, not
+  copied into state or HTML; consult CloudWatch for the complete log.
 - If quota/capacity rejection occurs, verify the scheduler tries the next
   suitable priced type without consuming a started attempt and does not
   immediately retry a quota-rejected type on the next attempt. Time spent

@@ -29,8 +29,9 @@ def classify_failure(*, worker: dict[str, Any] | None = None,
     # exception is unrelated. Use them only if no structured error exists.
     worker_error = bool(worker.get("error_type") or worker.get("error"))
     tail_line = next((line.strip() for line in reversed(logs.splitlines()) if line.strip()), "")
-    reason = structured or tail_line[-500:]
-    lowered = (structured if worker_error else f"{structured} {logs}").lower()
+    diagnostic = "" if worker_error else tail_line[-500:]
+    reason = " ".join(part for part in (structured, diagnostic) if part)
+    lowered = reason.lower()
     phase = worker.get("phase")
     if any(marker in lowered for marker in ("resourcelimitexceeded", "quota exceeded", "service quota",
                                              "quota has been reached", "limit exceeded for processing")):

@@ -176,6 +176,17 @@ def test_fingerprint_and_report_artifacts(tmp_path):
         run_baseline(df.assign(extra=0), plan, tmp_path)
 
 
+def test_tabpfn_report_displays_required_attribution():
+    plan = plan_baseline(frame(), BenchmarkConfig("id", "target", split_col="split"))
+    tabpfn = next(m for m in plan.models if m.name == "TabPFN")
+    html = render_report(plan, [{"name": "TabPFN", "status": "completed",
+                                 "gini": 0.5, "auc": 0.75, "context_rows": 6,
+                                 "feature_count": 2, "scored_rows": 6, "seconds": 1.0,
+                                 "license": tabpfn.license,
+                                 "attribution_required": tabpfn.attribution_required}], "fixture")
+    assert "Built with PriorLabs-TabPFN" in html
+
+
 def test_bool_target_inference():
     df = frame().assign(target=lambda d: d["target"].astype(bool))
     plan = plan_baseline(df, BenchmarkConfig("id", "target", split_col="split"))

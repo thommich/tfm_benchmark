@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from threading import RLock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -29,6 +30,9 @@ class S3RunStore:
         self.kms_key_id = kms_key_id
         self.owner = uuid4().hex
         self.lease_etag: str | None = None
+        self.state_etag: str | None = None
+        self.lease_failure: Exception | None = None
+        self._lease_lock = RLock()
 
     def key(self, suffix: str) -> str:
         return f"{self.prefix}/{suffix.lstrip('/')}"
@@ -53,6 +57,22 @@ class S3RunStore:
 
     def get_json(self, suffix: str) -> dict:
         return json.loads(self.get_object(suffix)["Body"].read())
+
+    def get_state(self) -> dict:
+        current = self.get_object("state.json")
+        self.state_etag = current["ETag"]
+        return json.loads(current["Body"].read())
+
+    def put_state(self, state: dict) -> None:
+        self.assert_lease()
+        condition = ({"IfMatch": self.state_etag} if self.state_etag else
+                     {"IfNoneMatch": "*"})
+        try:
+            self.state_etag = self.put_json("state.json", state, **condition)["ETag"]
+        except Exception as exc:
+            if _conflict(exc):
+                raise LeaseHeld("Run state changed under another scheduler") from exc
+            raise
 
     def maybe_bytes(self, suffix: str) -> bytes | None:
         try:
@@ -100,26 +120,37 @@ class S3RunStore:
             raise
 
     def renew_lease(self, *, seconds: int = 180) -> None:
-        existing = self.get_object("lease.json")
-        current = json.loads(existing["Body"].read())
-        if current["owner"] != self.owner or existing["ETag"] != self.lease_etag:
-            raise LeaseHeld("Scheduler lease changed; stop submitting jobs")
-        lease = {"owner": self.owner, "expires_utc": (_utcnow() + timedelta(seconds=seconds)).isoformat()}
-        try:
-            self.lease_etag = self.put_json("lease.json", lease, IfMatch=self.lease_etag)["ETag"]
-        except Exception as exc:
-            raise LeaseHeld("Scheduler lease renewal failed; stop submitting jobs") from exc
+        with self._lease_lock:
+            self.assert_lease()
+            lease = {"owner": self.owner, "expires_utc": (_utcnow() + timedelta(seconds=seconds)).isoformat()}
+            try:
+                self.lease_etag = self.put_json("lease.json", lease, IfMatch=self.lease_etag)["ETag"]
+            except Exception as exc:
+                raise LeaseHeld("Scheduler lease renewal failed; stop submitting jobs") from exc
+
+    def assert_lease(self) -> None:
+        with self._lease_lock:
+            if self.lease_failure is not None:
+                raise LeaseHeld("Scheduler lease heartbeat failed; stop submitting jobs") from self.lease_failure
+            if self.lease_etag is None:
+                raise LeaseHeld("Scheduler does not hold the run lease")
+            existing = self.get_object("lease.json")
+            current = json.loads(existing["Body"].read())
+            if (current["owner"] != self.owner or existing["ETag"] != self.lease_etag or
+                    datetime.fromisoformat(current["expires_utc"]) <= _utcnow()):
+                raise LeaseHeld("Scheduler lease changed or expired; stop submitting jobs")
 
     def release_lease(self) -> None:
-        if self.lease_etag is None:
-            return
-        existing = self.get_object("lease.json")
-        current = json.loads(existing["Body"].read())
-        if current["owner"] == self.owner and existing["ETag"] == self.lease_etag:
-            self.put_json("lease.json", {"owner": self.owner,
-                                         "expires_utc": _utcnow().isoformat()},
-                          IfMatch=self.lease_etag)
-        self.lease_etag = None
+        with self._lease_lock:
+            if self.lease_etag is None:
+                return
+            existing = self.get_object("lease.json")
+            current = json.loads(existing["Body"].read())
+            if current["owner"] == self.owner and existing["ETag"] == self.lease_etag:
+                self.put_json("lease.json", {"owner": self.owner,
+                                             "expires_utc": _utcnow().isoformat()},
+                              IfMatch=self.lease_etag)
+            self.lease_etag = None
 
 
 def _error_code(exc: Exception) -> str:
