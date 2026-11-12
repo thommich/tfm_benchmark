@@ -140,6 +140,8 @@ def _profile(df: pd.DataFrame, features: list[str], train: np.ndarray, valid: np
         "features": len(features), "dtypes": dtype_counts,
         "missing_cells": int(df[features].isna().sum().sum()),
         "dataframe_bytes": int(df.memory_usage(index=True, deep=True).sum()),
+        "reference_row_bytes": max(1, int(df.loc[train, features].memory_usage(index=True, deep=True).sum()
+                                          / int(train.sum()))),
         "cpu_count": psutil.cpu_count(logical=True), "ram_total_bytes": memory.total,
         "ram_available_bytes": memory.available, "scratch_free_bytes": disk.free, "gpu": gpu,
     }
@@ -203,7 +205,7 @@ def _plan_model(spec: Any, df: pd.DataFrame, train: np.ndarray, valid: np.ndarra
     if env.max_cells:
         caps.append(env.max_cells // len(item.feature_cols))
     # Conservative in-memory reference budget; offloading models can use more.
-    row_bytes = max(1, profile["dataframe_bytes"] // max(1, profile["rows"]))
+    row_bytes = profile.get("reference_row_bytes") or max(1, profile["dataframe_bytes"] // max(1, profile["rows"]))
     if spec.name != "TabICLv2":
         caps.append(max(2, int(profile["ram_available_bytes"] * 0.65 // (row_bytes * 4))))
     item.context_rows = min(caps)
@@ -222,6 +224,9 @@ def _plan_model(spec: Any, df: pd.DataFrame, train: np.ndarray, valid: np.ndarra
         if item.context_rows > 100_000:
             item.model_params.update({"kv_cache": True, "offload_mode": "auto"})
             item.adaptations.append("TabICLv2 KV cache offloading enabled")
+    if spec.name in {"Mitra", "MitraV2"}:
+        # TabTune's "auto" mode silently substitutes random weights on download failure.
+        item.model_params["use_pretrained_weights"] = True
     from tabtune.registry import check_envelope
     try:
         check_envelope(spec, n_rows=item.context_rows, n_features=len(item.feature_cols), n_classes=2, mode="error")
@@ -235,6 +240,13 @@ def plan_baseline(df: pd.DataFrame, config: BenchmarkConfig, *, output_dir: str 
     features, positive, negative = _validate_config(df, config)
     train, valid, source, cutoff = split_masks(df, config)
     profile = _profile(df, features, train, valid, output_dir)
+    return _assemble_plan(df, config, features, positive, negative, train, valid, source, cutoff, profile)
+
+
+def _assemble_plan(df: pd.DataFrame, config: BenchmarkConfig, features: list[str],
+                   positive: Any, negative: Any, train: np.ndarray, valid: np.ndarray,
+                   source: str, cutoff: str | None, profile: dict[str, Any]) -> RunPlan:
+    """Shared registry, eligibility and train-only adaptation path for local and cloud."""
     from tabtune.registry import list_models
     specs = list_models()
     needs_selection = any(

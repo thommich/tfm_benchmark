@@ -1,0 +1,238 @@
+{
+  "source": "AWS Price List Bulk API: AmazonSageMaker/current/sa-east-1/index.json",
+  "source_url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonSageMaker/current/sa-east-1/index.json",
+  "publication_date": "2026-11-12T03:11:34Z",
+  "region": "sa-east-1",
+  "products": [
+    {
+      "type": "ml.g4dn.12xlarge",
+      "vcpus": 48,
+      "ram_gib": 192.0,
+      "gpu_count": 4,
+      "vram_per_gpu_gib": 16.0,
+      "storage": "900 GB NVMe SSD",
+      "usd_per_hour": 8.311,
+      "sku": "ZKS8MQDG275R3GD6"
+    },
+    {
+      "type": "ml.g4dn.16xlarge",
+      "vcpus": 64,
+      "ram_gib": 256.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 16.0,
+      "storage": "900 GB NVMe SSD",
+      "usd_per_hour": 9.246,
+      "sku": "RXE4NHUM3JGTHBXF"
+    },
+    {
+      "type": "ml.g4dn.2xlarge",
+      "vcpus": 8,
+      "ram_gib": 32.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 16.0,
+      "storage": "225 GB NVMe SSD",
+      "usd_per_hour": 1.598,
+      "sku": "WQR7GJRDMFTJ8BV8"
+    },
+    {
+      "type": "ml.g4dn.4xlarge",
+      "vcpus": 16,
+      "ram_gib": 64.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 16.0,
+      "storage": "225 GB NVMe SSD",
+      "usd_per_hour": 2.557,
+      "sku": "56QF5HWQERPNPYPE"
+    },
+    {
+      "type": "ml.g4dn.8xlarge",
+      "vcpus": 32,
+      "ram_gib": 128.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 16.0,
+      "storage": "900 GB NVMe SSD",
+      "usd_per_hour": 4.622,
+      "sku": "YUNCRKDSX98Z4VKY"
+    },
+    {
+      "type": "ml.g4dn.xlarge",
+      "vcpus": 4,
+      "ram_gib": 16.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 16.0,
+      "storage": "125 GB NVMe SSD",
+      "usd_per_hour": 1.252,
+      "sku": "X8KVNPGT4BGYT9PD"
+    },
+    {
+      "type": "ml.g5.12xlarge",
+      "vcpus": 48,
+      "ram_gib": 192.0,
+      "gpu_count": 4,
+      "vram_per_gpu_gib": 24.0,
+      "storage": "1 x 3800 GB NVMe SSD",
+      "usd_per_hour": 12.05159,
+      "sku": "8WQKXNTTJ7PC4XVE"
+    },
+    {
+      "type": "ml.g5.16xlarge",
+      "vcpus": 64,
+      "ram_gib": 256.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 24.0,
+      "storage": "1 x 1900 GB NVMe SSD",
+      "usd_per_hour": 8.70299,
+      "sku": "QS4PAAXNVWV57Y7K"
+    },
+    {
+      "type": "ml.g5.24xlarge",
+      "vcpus": 96,
+      "ram_gib": 384.0,
+      "gpu_count": 4,
+      "vram_per_gpu_gib": 24.0,
+      "storage": "1 x 3800 GB NVMe SSD",
+      "usd_per_hour": 17.30398,
+      "sku": "G4FN6TJ8GTXNPYUR"
+    },
+    {
+      "type": "ml.g5.2xlarge",
+      "vcpus": 8,
+      "ram_gib": 32.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 24.0,
+      "storage": "1 x 450 GB NVMe SSD",
+      "usd_per_hour": 2.5752,
+      "sku": "X8ZB7DZE3QK8A58J"
+    },
+    {
+      "type": "ml.g5.48xlarge",
+      "vcpus": 192,
+      "ram_gib": 768.0,
+      "gpu_count": 8,
+      "vram_per_gpu_gib": 24.0,
+      "storage": "2 x 3800 GB NVMe SSD",
+      "usd_per_hour": 34.60795,
+      "sku": "Q83SQ39884ATE6PP"
+    },
+    {
+      "type": "ml.g5.4xlarge",
+      "vcpus": 16,
+      "ram_gib": 64.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 24.0,
+      "storage": "1 x 600 GB NVMe SSD",
+      "usd_per_hour": 3.4506,
+      "sku": "FET7C7HJVSFRP6Q3"
+    },
+    {
+      "type": "ml.g5.8xlarge",
+      "vcpus": 32,
+      "ram_gib": 128.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 24.0,
+      "storage": "1 x 900 GB NVMe SSD",
+      "usd_per_hour": 5.20139,
+      "sku": "WTCW78JEWDES989M"
+    },
+    {
+      "type": "ml.g5.xlarge",
+      "vcpus": 4,
+      "ram_gib": 16.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 24.0,
+      "storage": "1 x 250 GB NVMe SSD",
+      "usd_per_hour": 2.1375,
+      "sku": "ZZEAV6AJFE82UZ9P"
+    },
+    {
+      "type": "ml.g6.12xlarge",
+      "vcpus": 48,
+      "ram_gib": 192.0,
+      "gpu_count": 4,
+      "vram_per_gpu_gib": 22.352,
+      "storage": "4 X 940 GB NVMe SSD",
+      "usd_per_hour": 9.7772625,
+      "sku": "GDFNUQBVSKKTZRZD"
+    },
+    {
+      "type": "ml.g6.16xlarge",
+      "vcpus": 64,
+      "ram_gib": 256.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 22.352,
+      "storage": "2 x 940 GB NVMe SSD",
+      "usd_per_hour": 7.21735,
+      "sku": "S9F3N6MWVET4GFFY"
+    },
+    {
+      "type": "ml.g6.24xlarge",
+      "vcpus": 96,
+      "ram_gib": 384.0,
+      "gpu_count": 4,
+      "vram_per_gpu_gib": 22.352,
+      "storage": "4 X 940 GB NVMe SSD",
+      "usd_per_hour": 14.1831375,
+      "sku": "4SK8HU7APTKD96H6"
+    },
+    {
+      "type": "ml.g6.2xlarge",
+      "vcpus": 8,
+      "ram_gib": 32.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 22.352,
+      "storage": "1 x 450 GB NVMe SSD",
+      "usd_per_hour": 2.0771625,
+      "sku": "27T2AX72QW9EYJ6K"
+    },
+    {
+      "type": "ml.g6.48xlarge",
+      "vcpus": 192,
+      "ram_gib": 768.0,
+      "gpu_count": 8,
+      "vram_per_gpu_gib": 22.352,
+      "storage": "8 x 940 NVMe SSD",
+      "usd_per_hour": 28.3662875,
+      "sku": "28KE889D9D887AGG"
+    },
+    {
+      "type": "ml.g6.4xlarge",
+      "vcpus": 16,
+      "ram_gib": 64.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 22.352,
+      "storage": "1 x 600 GB NVMe SSD",
+      "usd_per_hour": 2.811475,
+      "sku": "UZGUGJFK92XPPY7M"
+    },
+    {
+      "type": "ml.g6.8xlarge",
+      "vcpus": 32,
+      "ram_gib": 128.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 22.352,
+      "storage": "2 x 450 GB NVMe SSD",
+      "usd_per_hour": 4.2801,
+      "sku": "8TFE3VJ8M547TVFA"
+    },
+    {
+      "type": "ml.g6.xlarge",
+      "vcpus": 4,
+      "ram_gib": 16.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 22.352,
+      "storage": "1 x 250 GB NVMe SSD",
+      "usd_per_hour": 1.9152,
+      "sku": "NAE3HJNR43WM9T8S"
+    },
+    {
+      "type": "ml.p5.4xlarge",
+      "vcpus": 16,
+      "ram_gib": 256.0,
+      "gpu_count": 1,
+      "vram_per_gpu_gib": 74.506,
+      "storage": "EBS only",
+      "usd_per_hour": 13.29216,
+      "sku": "WEJ6SPMWYFY4B45K"
+    }
+  ]
+}
