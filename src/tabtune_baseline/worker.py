@@ -79,7 +79,7 @@ def _checkpoint_identity(pipeline: Any, model_plan: ModelPlan) -> dict[str, Any]
     if model_plan.name == "TabPFN" and importlib.metadata.version("tabtune") == "0.2.1":
         try:
             from tabtune.models.tabpfn.model_loading import resolve_model_path
-            candidates.insert(0, resolve_model_path(None, "classifier", version="v2.5")[0])
+            candidates.insert(0, resolve_model_path(None, "classifier", version="v2")[0])
         except Exception:
             pass
     for candidate in candidates:
@@ -106,6 +106,7 @@ def execute_model(
     scores_path: Path,
     *,
     pipeline_factory: Callable[..., Any] = _default_pipeline_factory,
+    on_phase: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Run one model, preserving every validation row in the score artifact."""
     if model_plan.status != "ready":
@@ -119,17 +120,28 @@ def execute_model(
     y_val = (df.loc[valid, cfg.target_col] == run_plan.positive_label).astype(int)
     X_ref, y_ref = select_context(X_ref, y_ref, model_plan.context_rows, cfg.seed)
     compatibility = apply_tabtune_compat(model_plan.name) if pipeline_factory is _default_pipeline_factory else None
+    model_params = dict(model_plan.model_params)
+    if model_plan.name in {"Mitra", "MitraV2"}:
+        model_params["use_pretrained_weights"] = True
+    if model_plan.name == "TabPFN" and pipeline_factory is _default_pipeline_factory:
+        # The registry licenses v2, while TabTune 0.2.1 defaults to v2.5.
+        from tabtune.models.tabpfn.model_loading import resolve_model_path
+        model_params["model_path"] = str(resolve_model_path(None, "classifier", version="v2")[0])
+    if on_phase:
+        on_phase("model_initialization")
     pipeline = pipeline_factory(
         model_name=model_plan.name,
         task_type="classification",
         tuning_strategy="inference",
         tuning_params=model_plan.tuning_params,
         processor_params=model_plan.processor_params,
-        model_params=model_plan.model_params,
+        model_params=model_params,
         envelope_mode="error",
         license_mode="commercial",
         validate=True,
     )
+    if on_phase:
+        on_phase("fit")
     pipeline.fit(X_ref, y_ref)
     checkpoint = _checkpoint_identity(pipeline, model_plan) if pipeline_factory is _default_pipeline_factory else {"resolution": "test_stub"}
     order = _class_order(pipeline)
@@ -137,6 +149,8 @@ def execute_model(
         raise ValueError(f"Expected probability classes [0, 1], found {order!r}")
     positive_index = order.index(1)
     scores = np.empty(len(X_val), dtype=np.float64)
+    if on_phase:
+        on_phase("predict")
     batch = model_plan.prediction_batch_rows
     for start in range(0, len(X_val), batch):
         stop = min(start + batch, len(X_val))
@@ -156,6 +170,8 @@ def execute_model(
     })
     scores_path.parent.mkdir(parents=True, exist_ok=True)
     score_frame.to_parquet(scores_path, index=False)
+    if on_phase:
+        on_phase("complete")
     return {
         "name": model_plan.name, "status": "completed", "auc": auc,
         "gini": 2 * auc - 1, "scored_rows": len(scores),
@@ -163,7 +179,7 @@ def execute_model(
         "positive_label": run_plan.positive_label, "probability_order": order,
         "seconds": round(time.perf_counter() - started, 3),
         "scores_file": str(scores_path), "adaptations": list(model_plan.adaptations) + ([compatibility] if compatibility else []),
-        "model_params": model_plan.model_params, "tuning_params": model_plan.tuning_params,
+        "model_params": model_params, "tuning_params": model_plan.tuning_params,
         "processor_params": model_plan.processor_params, "weights": model_plan.weights,
         "checkpoint": checkpoint,
     }

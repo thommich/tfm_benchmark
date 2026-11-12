@@ -129,6 +129,35 @@ def test_gini_probability_order_and_full_validation(tmp_path):
         assert saved["id"].tolist() == list(range(6, 12))
 
 
+def test_commercial_checkpoint_parameters_are_enforced(tmp_path, monkeypatch):
+    from tabtune.models.tabpfn import model_loading
+    import tabtune_baseline.worker as worker
+
+    plan = plan_baseline(frame(), BenchmarkConfig("id", "target", split_col="split"))
+    for name in ("Mitra", "MitraV2"):
+        item = next(m for m in plan.models if m.name == name)
+        assert item.model_params["use_pretrained_weights"] is True
+
+    resolved = []
+    def fake_resolve(path, kind, version="v2"):
+        resolved.append(version)
+        return (tmp_path / "tabpfn-v2.ckpt", None, None, None)
+    captured = {}
+    def fake_pipeline(**kwargs):
+        captured.update(kwargs)
+        return StubPipeline(**kwargs)
+    monkeypatch.setattr(model_loading, "resolve_model_path", fake_resolve)
+    monkeypatch.setattr(worker, "_default_pipeline_factory", fake_pipeline)
+    monkeypatch.setattr(worker, "apply_tabtune_compat", lambda _: None)
+    item = next(m for m in plan.models if m.name == "TabPFN")
+    item.model_params["model_path"] = "unreviewed-v2.5.ckpt"
+    result = execute_model(frame(), plan, item, tmp_path / "scores.parquet",
+                           pipeline_factory=fake_pipeline)
+    assert captured["model_params"]["model_path"].endswith("tabpfn-v2.ckpt")
+    assert result["model_params"] == captured["model_params"]
+    assert resolved and set(resolved) == {"v2"}
+
+
 def test_fingerprint_and_report_artifacts(tmp_path):
     df = frame()
     plan = plan_baseline(df, BenchmarkConfig("id", "target", split_col="split"))
@@ -145,6 +174,17 @@ def test_fingerprint_and_report_artifacts(tmp_path):
     assert "No model completed" in Path(result.report_html).read_text()
     with pytest.raises(ValueError, match="changed after planning"):
         run_baseline(df.assign(extra=0), plan, tmp_path)
+
+
+def test_tabpfn_report_displays_required_attribution():
+    plan = plan_baseline(frame(), BenchmarkConfig("id", "target", split_col="split"))
+    tabpfn = next(m for m in plan.models if m.name == "TabPFN")
+    html = render_report(plan, [{"name": "TabPFN", "status": "completed",
+                                 "gini": 0.5, "auc": 0.75, "context_rows": 6,
+                                 "feature_count": 2, "scored_rows": 6, "seconds": 1.0,
+                                 "license": tabpfn.license,
+                                 "attribution_required": tabpfn.attribution_required}], "fixture")
+    assert "Built with PriorLabs-TabPFN" in html
 
 
 def test_bool_target_inference():
