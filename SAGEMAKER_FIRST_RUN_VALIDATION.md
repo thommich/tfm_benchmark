@@ -80,8 +80,10 @@ against the same run. Record the original and resumed job names.
   preserve the KMS key and count only this run's jobs that are still active when
   subtracting from account quota. A job that finished during the restart must
   reconcile as terminal before new dispatch. Verify the lease renews during a
-  slow preflight or scheduler step; if ownership is lost, stale state writes
-  and job submissions must stop.
+  slow preflight or scheduler step. Once ownership loss is detected, that
+  scheduler must stop new submissions and state writes. An already in-flight
+  AWS submission can still finish; the next scheduler must reconcile its
+  deterministic job name and reject conflicting state versions before dispatch.
 - For any natural failure, compare `error.json`, SageMaker `FailureReason`,
   `cloudwatch.log`, state, events, and the final report. The short failure class
   and message must describe the actual exception; routine Hugging Face or
