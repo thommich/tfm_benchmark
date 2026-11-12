@@ -21,11 +21,16 @@ def classify_failure(*, worker: dict[str, Any] | None = None,
                      logs: str = "", submission_error: str = "") -> Failure:
     worker = worker or {}
     description = description or {}
-    reason = " ".join(str(x) for x in (
-        worker.get("error", ""), worker.get("error_type", ""),
+    structured = " ".join(str(x) for x in (
+        worker.get("error_type", ""), worker.get("error", ""),
         description.get("FailureReason", ""), description.get("ExitMessage", ""),
-        submission_error, logs))
-    lowered = reason.lower()
+        submission_error) if x)
+    # Startup logs often mention checkpoints and memory even when the eventual
+    # exception is unrelated. Use them only if no structured error exists.
+    worker_error = bool(worker.get("error_type") or worker.get("error"))
+    tail_line = next((line.strip() for line in reversed(logs.splitlines()) if line.strip()), "")
+    reason = structured or tail_line[-500:]
+    lowered = (structured if worker_error else f"{structured} {logs}").lower()
     phase = worker.get("phase")
     if any(marker in lowered for marker in ("resourcelimitexceeded", "quota exceeded", "service quota",
                                              "quota has been reached", "limit exceeded for processing")):

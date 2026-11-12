@@ -86,7 +86,7 @@ def job_name(plan: SageMakerPlan, model: str, number: int, instance_type: str) -
 def initial_state(plan: SageMakerPlan, checksum: str) -> dict[str, Any]:
     base = {m.name: m for m in plan.baseline.models}
     return {"run_id": plan.run_id, "plan_identity": plan.identity,
-            "dataset_sha256": checksum, "status": "running", "submission_intents": {}, "events": [],
+            "dataset_sha256": checksum, "status": "running", "submission_intents": {},
             "models": {name: {"status": "pending" if item.status == "ready" else item.status,
                               "reason": item.reason, "model_plan": asdict(item),
                               "attempts": [], "rejections": [], "result": None,
@@ -139,8 +139,10 @@ def orchestrator_step(plan: SageMakerPlan, state: dict[str, Any], tokens: Capaci
         emit("attempt_failed", model=name, job_name=attempt["job_name"], kind=failure.kind,
              phase=failure.phase, reason=failure.reason)
         current = next(c for c in cloud_models[name].candidates if c.instance_type == attempt["instance_type"])
+        quota_candidates = [c for c in cloud_models[name].candidates
+                            if tokens.preflight.quotas.get(c.instance_type) != 0]
         adapted = adapt_for_retry(ModelPlan(**record["model_plan"]), failure,
-                                  len(record["attempts"]), current, cloud_models[name].candidates,
+                                  len(record["attempts"]), current, quota_candidates,
                                   plan.cloud.max_started_attempts)
         if adapted:
             next_item, preferred, notice = adapted
@@ -164,18 +166,24 @@ def orchestrator_step(plan: SageMakerPlan, state: dict[str, Any], tokens: Capaci
         candidates = [c for c in cloud_models[name].candidates
                       if c.vram_per_gpu_gib >= record["preferred_vram"]]
         rejected = {r["instance_type"] for r in record["rejections"]
-                    if r["number"] == len(record["attempts"]) + 1}
+                    if r["kind"] == "quota" or r["number"] == len(record["attempts"]) + 1}
         number = len(record["attempts"]) + 1
         while True:
             candidate = next_candidate(candidates, tokens, rejected)
             if candidate is None:
-                if not candidates or len(rejected) == len(candidates):
+                if not candidates or all(c.instance_type in rejected for c in candidates):
                     record["status"] = "blocked"
                     record["reason"] = "No quota/capacity for a suitable priced GPU type; request a Processing quota increase or retry later"
                     emit("model_blocked", model=name, reason=record["reason"])
+                elif any((c.instance_type not in tokens.preflight.quotas or
+                          tokens.preflight.quotas[c.instance_type] -
+                          tokens.preflight.active_jobs.get(c.instance_type, 0) > 0)
+                         for c in candidates if c.instance_type not in rejected):
+                    # Suitable account quota exists; this run's own jobs hold it.
+                    record["wait_since"] = None
                 elif record["wait_since"] is None:
                     record["wait_since"] = clock.isoformat()
-                elif (clock - datetime.fromisoformat(record["wait_since"])).total_seconds() >= plan.cloud.external_capacity_wait_seconds and not tokens.running:
+                elif (clock - datetime.fromisoformat(record["wait_since"])).total_seconds() >= plan.cloud.external_capacity_wait_seconds:
                     record["status"] = "blocked"
                     record["reason"] = "External quota/capacity wait exceeded 30 minutes"
                     emit("model_blocked", model=name, reason=record["reason"])
@@ -270,7 +278,8 @@ def restore_tokens(plan: SageMakerPlan, state: dict[str, Any], preflight: Accoun
             attempt = record["attempts"][-1]
             tokens.running[attempt["job_name"]] = attempt["instance_type"]
             kind = attempt["instance_type"]
-            own_counts[kind] = own_counts.get(kind, 0) + 1
+            if attempt["job_name"] in preflight.active_job_names:
+                own_counts[kind] = own_counts.get(kind, 0) + 1
     for kind, count in own_counts.items():
         preflight.active_jobs[kind] = max(0, preflight.active_jobs.get(kind, 0) - count)
     return tokens

@@ -224,6 +224,9 @@ def _plan_model(spec: Any, df: pd.DataFrame, train: np.ndarray, valid: np.ndarra
         if item.context_rows > 100_000:
             item.model_params.update({"kv_cache": True, "offload_mode": "auto"})
             item.adaptations.append("TabICLv2 KV cache offloading enabled")
+    if spec.name in {"Mitra", "MitraV2"}:
+        # TabTune's "auto" mode silently substitutes random weights on download failure.
+        item.model_params["use_pretrained_weights"] = True
     from tabtune.registry import check_envelope
     try:
         check_envelope(spec, n_rows=item.context_rows, n_features=len(item.feature_cols), n_classes=2, mode="error")

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .cloud_catalog import _snapshot
 from .models import CloudOutputLayout, SageMakerConfig
 
 
@@ -29,11 +30,14 @@ class SageMakerAdapter:
     def submit(self, layout: CloudOutputLayout, *, model: str, number: int,
                job_name: str, instance_type: str) -> str:
         Input, Output, Processor, Session = _sdk()
-        session = self.sdk_session or Session(boto_session=self.boto_session)
+        session = self.sdk_session or Session(boto_session=self.boto_session, default_bucket=layout.run_uri[5:].split("/", 1)[0])
+        storage = next(row["storage"] for row in _snapshot()["products"] if row["type"] == instance_type)
         processor = Processor(
             role=self.cloud.role_arn, image_uri=self.cloud.image_uri, command=["python"],
             instance_count=1, instance_type=instance_type,
             volume_size_in_gb=self.cloud.volume_size_gb,
+            output_kms_key=self.cloud.kms_key_id,
+            volume_kms_key=self.cloud.kms_key_id if storage == "EBS only" else None,
             max_runtime_in_seconds=self.cloud.max_runtime_seconds,
             sagemaker_session=session)
         inputs = [

@@ -48,7 +48,11 @@ def estimate_model_resources(profile: dict[str, Any], context_rows: int,
     cpu_gib = 6 + (profile["dataframe_bytes"] * 4 + reference_bytes * 4 + validation_bytes * 2) / GIB
     # Single-process worker uses one GPU. These are planning heuristics, not measured peaks.
     model_floor = {"TabICLv2": 12, "TabPFN": 8, "Mitra": 12, "MitraV2": 12}.get(model_name, 10)
-    vram_gib = model_floor + (context_rows * feature_count * 32 + batch_rows * feature_count * 64) / GIB
+    # A query can attend to reference tokens; account for that interaction as
+    # well as feature storage. This remains a heuristic until GPU measurements.
+    query_context_bytes = context_rows * batch_rows * 64
+    vram_gib = model_floor + (context_rows * feature_count * 32 +
+                              batch_rows * feature_count * 64 + query_context_bytes) / GIB
     scratch_gib = 20 + (profile["dataframe_bytes"] * 3 + reference_bytes * 2 + validation_bytes) / GIB
     return {
         "cpu_ram_gib": round(cpu_gib * 1.3, 3),

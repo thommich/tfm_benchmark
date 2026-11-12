@@ -16,6 +16,10 @@ def test_oom_phase_and_non_oom_failure_classification():
     assert classify_failure(worker={"error": "checkpoint download denied", "phase": "fit"}).kind == "checkpoint"
     assert classify_failure(description={"FailureReason": "Unknown container failure"}).kind == "unknown"
     assert classify_failure(submission_error="ResourceLimitExceeded: quota reached").kind == "quota"
+    assert classify_failure(worker={"error_type": "ValueError", "error": "bad input"},
+                            logs="Downloading checkpoint from HuggingFace; out of memory warning").kind == "unknown"
+    assert classify_failure(description={"FailureReason": "AlgorithmError"},
+                            logs="CUDA out of memory").kind == "oom"
 
 
 def test_context_preserved_until_attempt_four_and_retry_limit():

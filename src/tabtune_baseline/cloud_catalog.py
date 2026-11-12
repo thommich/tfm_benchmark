@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from importlib.resources import files
 from typing import Any
 from urllib.request import urlopen
@@ -16,6 +17,7 @@ def _snapshot() -> dict[str, Any]:
     return json.loads(files("tabtune_baseline").joinpath(SNAPSHOT).read_text(encoding="utf-8"))
 
 
+@lru_cache(maxsize=1)
 def _live_prices(url: str) -> tuple[dict[str, float], str]:
     with urlopen(url, timeout=8) as response:
         data = json.load(response)
@@ -28,7 +30,10 @@ def _live_prices(url: str) -> tuple[dict[str, float], str]:
         for term in data["terms"]["OnDemand"].get(sku, {}).values():
             for dimension in term["priceDimensions"].values():
                 if dimension.get("unit") == "Hrs" and name:
-                    rates[name] = float(dimension["pricePerUnit"]["USD"]) / 60
+                    rate = float(dimension["pricePerUnit"]["USD"]) / 60
+                    if name in rates and rates[name] != rate:
+                        raise ValueError(f"Conflicting live Processing rates for {name}")
+                    rates[name] = rate
     return rates, data["publicationDate"]
 
 
@@ -59,7 +64,7 @@ def suitable_candidates(estimate: dict[str, Any], cloud: SageMakerConfig,
     candidates: list[InstanceCandidate] = []
     minutes = max(15.0, 15 + estimate["reference_rows"] / 20_000 +
                   estimate["validation_rows"] / 50_000)
-    usable_disk = cloud.volume_size_gb * 1000**3 / 1024**3 - 10
+    usable_disk = cloud.volume_size_gb - 10
     for row in catalog:
         rate = row.get("usd_per_hour")
         if not rate or rate <= 0:

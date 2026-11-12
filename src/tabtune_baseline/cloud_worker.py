@@ -85,6 +85,13 @@ def run_one(data: Path, plan_file: Path, attempt_file: Path, output: Path) -> di
         cache.mkdir(parents=True, exist_ok=True)
         os.environ["HF_HOME"] = str(cache / "huggingface")
         os.environ["TORCH_HOME"] = str(cache / "torch")
+        os.environ["XDG_CACHE_HOME"] = str(cache / "xdg")
+        os.environ["TABPFN_MODEL_CACHE_DIR"] = str(cache / "tabpfn")
+        os.environ["ILTM_CKPT_DIR"] = str(cache / "iltm")
+        if item.name == "TabICLv2" and item.model_params.get("kv_cache"):
+            offload = Path("/opt/ml/processing/scratch/tabiclv2_kv")
+            offload.mkdir(parents=True, exist_ok=True)
+            item.model_params["disk_offload_dir"] = str(offload)
         partial = output / "scores.partial.parquet"
         result = execute_model(frame, plan, item, partial,
                                on_phase=lambda value: emit("phase", phase=value))

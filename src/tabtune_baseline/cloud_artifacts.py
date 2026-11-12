@@ -120,8 +120,8 @@ def finalize_run(plan: SageMakerPlan, state: dict, store, output_dir: Path) -> C
         (run_dir / "results.json").write_text(json.dumps(result_payload, indent=2, default=str), encoding="utf-8")
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
         (run_dir / "report.html").write_text(render_report(plan.baseline, models, plan.run_id), encoding="utf-8")
-        (run_dir / "events.jsonl").write_text("".join(json.dumps(event, default=str) + "\n"
-                                                 for event in state.get("events", [])), encoding="utf-8")
+        events = store.maybe_bytes("events.jsonl")
+        (run_dir / "events.jsonl").write_bytes(events if events is not None else b"")
         for name in ("results.json", "manifest.json", "report.html", "events.jsonl"):
             store.upload_file(name, run_dir / name)
         state["artifacts_finalized"] = True

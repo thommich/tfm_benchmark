@@ -74,6 +74,8 @@ python3.11 -m venv .venv-cloud
 
 Build the [GPU image](cloud/Dockerfile) in Linux CI or CodeBuild using [the publish script](cloud/build_and_push.sh). The base is pinned by digest and `cloud/requirements-linux-py311.lock` contains transitive hashes. Record the ECR output digest and confirm `pip check`, the image self-test, and one real GPU Processing smoke before a production run. Build checks cannot establish the SageMaker host driver or checkpoint access. The image contains no model weights. SageMaker SDK v2 is in maintenance mode and reaches end of support on **2027-07-06**; the SDK calls are confined to `cloud_adapter.py`.
 
+Use [the first-run validation record](SAGEMAKER_FIRST_RUN_VALIDATION.md) for the exact image, account, checkpoint, score, artifact, resume, and failure checks to complete in AWS.
+
 The Studio caller needs permission to inspect the account, Processing quotas and active jobs, role and ECR digest, and to submit/describe jobs and read CloudWatch Processing logs. It needs read/write/delete access to one **private** S3 prefix in `sa-east-1`. The Processing role needs ECR pull, S3 input/output, CloudWatch logging, and outbound access to checkpoint hosts such as Hugging Face (or a configured private route). If a KMS key is selected, both caller and job role need its S3 encryption permissions. Processing quotas may start at zero; request a per-type increase in Service Quotas. Quota availability does not reserve capacity.
 
 ```python

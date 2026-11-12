@@ -3,6 +3,7 @@ from tabtune_baseline.cloud_preflight import AccountPreflight
 from tabtune_baseline.cloud_scheduler import (CapacityTokens, dispatch_queue, initial_state,
                                                next_candidate, orchestrator_step)
 from tabtune_baseline import BenchmarkConfig, plan_sagemaker_baseline
+from datetime import datetime, timezone
 from test_baseline import frame
 from test_sagemaker_contracts import settings
 
@@ -101,3 +102,49 @@ def test_ambiguous_submit_response_reconciles_existing_job():
                       lambda *args: {}, lambda _: None, lambda *args, **kwargs: None)
     assert state["models"][name]["status"] == "running"
     assert len(state["models"][name]["attempts"]) == 1
+
+
+def test_own_job_wait_does_not_consume_external_capacity_timer():
+    plan = plan_sagemaker_baseline(frame(), BenchmarkConfig("id", "target", split_col="split"), settings())
+    name = next(m.name for m in plan.baseline.models if m.status == "ready")
+    for remote in plan.models:
+        if remote.name == name:
+            remote.candidates = remote.candidates[:1]
+    state = initial_state(plan, "checksum")
+    for other, record in state["models"].items():
+        if other != name:
+            record["status"] = "excluded"
+    record = state["models"][name]
+    record["wait_since"] = "2020-01-01T00:00:00+00:00"
+    candidate = next(m.candidates[0] for m in plan.models if m.name == name)
+    tokens = CapacityTokens(3, AccountPreflight("123456789012", {candidate.instance_type: 1}))
+    tokens.running["own-job"] = candidate.instance_type
+    orchestrator_step(plan, state, tokens, object(), lambda *args: None,
+                      lambda *args: {}, lambda _: None, lambda *args, **kwargs: None,
+                      clock=datetime(2026, 11, 12, tzinfo=timezone.utc))
+    assert record["status"] == "pending" and record["wait_since"] is None
+
+
+def test_quota_rejection_is_remembered_on_later_attempt():
+    plan = plan_sagemaker_baseline(frame(), BenchmarkConfig("id", "target", split_col="split"), settings())
+    name = next(m.name for m in plan.baseline.models if m.status == "ready")
+    state = initial_state(plan, "checksum")
+    for other, record in state["models"].items():
+        if other != name:
+            record["status"] = "excluded"
+    record = state["models"][name]
+    choices = next(m.candidates for m in plan.models if m.name == name)
+    record["attempts"] = [{"job_name": "first", "number": 1}]
+    record["rejections"] = [{"number": 1, "instance_type": choices[0].instance_type,
+                             "kind": "quota", "reason": "quota reached"}]
+    tokens = CapacityTokens(3, AccountPreflight("123456789012",
+                                                 {c.instance_type: 1 for c in choices}))
+    class Adapter:
+        selected = None
+        def submit(self, model, number, job, kind):
+            self.selected = kind
+    adapter = Adapter()
+    orchestrator_step(plan, state, tokens, adapter, lambda *args: None,
+                      lambda *args: {}, lambda _: None, lambda *args, **kwargs: None)
+    assert adapter.selected != choices[0].instance_type
+    assert record["attempts"][-1]["number"] == 2

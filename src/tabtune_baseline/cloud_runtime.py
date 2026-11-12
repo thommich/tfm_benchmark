@@ -46,10 +46,9 @@ def _run_uri(plan: SageMakerPlan) -> str:
 
 def _event(state: dict, store: S3RunStore, kind: str, **fields: Any) -> None:
     item = {"at": datetime.now(timezone.utc).isoformat(), "event": kind, **fields}
-    state.setdefault("events", []).append(item)
     print(json.dumps(item, default=str), flush=True)
-    data = "".join(json.dumps(event, default=str) + "\n" for event in state["events"])
-    store.put_bytes("events.jsonl", data.encode())
+    previous = store.maybe_bytes("events.jsonl") or b""
+    store.put_bytes("events.jsonl", previous + (json.dumps(item, default=str) + "\n").encode())
 
 
 def _preflight_models(plan: SageMakerPlan, state: dict, account, emit) -> None:
@@ -71,7 +70,7 @@ def _read_output(store: S3RunStore, session, name: str, number: int,
                  description: dict[str, Any]) -> dict[str, Any]:
     prefix = f"attempts/{name}/{number}"
     payload = store.maybe_bytes(f"{prefix}/result.json") or store.maybe_bytes(f"{prefix}/error.json")
-    result = json.loads(payload) if payload else {"status": "failed", "error": "Processing output is unavailable"}
+    result = json.loads(payload) if payload else {"status": "failed"}
     if result.get("status") == "completed":
         return result
     try:
@@ -85,7 +84,10 @@ def _read_output(store: S3RunStore, session, name: str, number: int,
                                           logStreamName=stream["logStreamName"],
                                           startFromHead=False, limit=200).get("events", [])
             lines.extend(event["message"] for event in events)
-        result["cloudwatch_logs"] = "\n".join(lines)[-20000:]
+        log_text = "\n".join(lines)[-20000:]
+        if log_text:
+            store.put_bytes(f"{prefix}/cloudwatch.log", log_text.encode())
+            result["cloudwatch_logs"] = log_text
     except Exception as exc:
         result["log_access_error"] = str(exc)
     return result
@@ -144,13 +146,17 @@ def launch_run(df: pd.DataFrame, plan: SageMakerPlan, output_dir: Path) -> Cloud
     # Account failure is reported before uploading the input snapshot.
     inspect_account(plan.cloud, session=session)
     store = S3RunStore(session.client("s3"), _run_uri(plan), kms_key_id=plan.cloud.kms_key_id)
-    if not store.acquire_lease():
-        state = store.get_json("state.json")
-        return CloudBenchmarkResult(store.run_uri, "monitoring", None,
-                                    {name: r["status"] for name, r in state["models"].items()})
+    _wait_for_lease(store, plan.cloud.poll_seconds)
     try:
         if store.maybe_bytes("state.json") is not None:
-            raise ValueError(f"Run {plan.run_id} already exists in S3; use resume_sagemaker_baseline")
+            stored_plan = SageMakerPlan.from_dict(store.get_json("plan.json"))
+            if stored_plan.identity != plan.identity:
+                raise ValueError("Existing run plan differs from the requested plan")
+            state = store.get_json("state.json")
+            if state["status"] == "terminal":
+                from .cloud_artifacts import finalize_run
+                return finalize_run(plan, state, store, output_dir)
+            return _drive(plan, state, store, session, output_dir)
         with tempfile.TemporaryDirectory(prefix="tabtune-cloud-") as temporary:
             staged = Path(temporary) / "input.parquet"
             df.reset_index(drop=True).to_parquet(staged, index=False)
@@ -171,12 +177,11 @@ def launch_run(df: pd.DataFrame, plan: SageMakerPlan, output_dir: Path) -> Cloud
 def resume_run(run_uri: str, output_dir: Path) -> CloudBenchmarkResult:
     session = _session("sa-east-1")
     store = S3RunStore(session.client("s3"), run_uri)
-    state = store.get_json("state.json")
-    if not store.acquire_lease():
-        return CloudBenchmarkResult(store.run_uri, "monitoring", None,
-                                    {name: r["status"] for name, r in state["models"].items()})
+    plan = SageMakerPlan.from_dict(store.get_json("plan.json"))
+    store.kms_key_id = plan.cloud.kms_key_id
+    _wait_for_lease(store, plan.cloud.poll_seconds)
     try:
-        plan = SageMakerPlan.from_dict(store.get_json("plan.json"))
+        state = store.get_json("state.json")
         if state["run_id"] != plan.run_id or state["plan_identity"] != plan.identity:
             raise ValueError("S3 run state and reviewed plan identity disagree")
         if state["status"] == "terminal":
@@ -185,3 +190,15 @@ def resume_run(run_uri: str, output_dir: Path) -> CloudBenchmarkResult:
         return _drive(plan, state, store, session, output_dir)
     finally:
         store.release_lease()
+
+
+def _wait_for_lease(store: S3RunStore, poll_seconds: int) -> None:
+    """A second notebook waits read-only until it can safely resume the run."""
+    while not store.acquire_lease():
+        snapshot = store.maybe_bytes("state.json")
+        if snapshot:
+            state = json.loads(snapshot)
+            counts = {status: sum(r["status"] == status for r in state["models"].values())
+                      for status in ("pending", "running", "completed", "failed", "blocked")}
+            print(json.dumps({"event": "monitoring", "run_uri": store.run_uri, **counts}), flush=True)
+        time.sleep(poll_seconds)

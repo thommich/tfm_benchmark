@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
+import time
 from urllib.request import Request, urlopen
 
 from .models import InstanceCandidate, SageMakerConfig
@@ -14,6 +16,7 @@ class AccountPreflight:
     quotas: dict[str, int] = field(default_factory=dict)
     active_jobs: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    active_job_names: set[str] = field(default_factory=set)
 
     def available(self, candidate: InstanceCandidate) -> int | None:
         quota = self.quotas.get(candidate.instance_type)
@@ -55,11 +58,15 @@ def inspect_account(cloud: SageMakerConfig, *, session=None,
             raise ValueError(f"Staging bucket is in {location!r}, expected {cloud.region}")
     except Exception as exc:
         raise RuntimeError(f"S3 staging bucket is inaccessible or in the wrong Region: {exc}") from exc
-    role_name = cloud.role_arn.split("role/", 1)[1]
+    role_name = cloud.role_arn.rsplit("/", 1)[-1]
     try:
         session.client("iam").get_role(RoleName=role_name)
     except Exception as exc:
-        raise RuntimeError(f"Processing IAM role cannot be inspected: {exc}") from exc
+        code = str(getattr(exc, "response", {}).get("Error", {}).get("Code", ""))
+        if code in {"AccessDenied", "AccessDeniedException"}:
+            output.warnings.append(f"Processing IAM role cannot be inspected: {exc}; submission will verify PassRole")
+        else:
+            raise RuntimeError(f"Processing IAM role cannot be inspected: {exc}") from exc
     repository = cloud.image_uri.split(".amazonaws.com/", 1)[1].split("@", 1)[0]
     digest = cloud.image_uri.rsplit("@", 1)[1]
     try:
@@ -75,8 +82,8 @@ def inspect_account(cloud: SageMakerConfig, *, session=None,
                 name = entry.get("QuotaName", "").lower()
                 if "processing job" not in name or "ml." not in name:
                     continue
-                instance = next((part for part in name.replace(",", " ").split()
-                                 if part.startswith("ml.")), None)
+                match = re.search(r"\bml\.[a-z0-9]+\.[a-z0-9]+\b", name)
+                instance = match.group(0) if match else None
                 if instance:
                     output.quotas[instance] = int(entry["Value"])
     except Exception as exc:
@@ -87,9 +94,18 @@ def inspect_account(cloud: SageMakerConfig, *, session=None,
         for status in ("InProgress", "Stopping"):
             for page in paginator.paginate(StatusEquals=status):
                 for item in page.get("ProcessingJobSummaries", []):
-                    detail = sm.describe_processing_job(ProcessingJobName=item["ProcessingJobName"])
+                    for retry in range(4):
+                        try:
+                            detail = sm.describe_processing_job(ProcessingJobName=item["ProcessingJobName"])
+                            break
+                        except Exception as exc:
+                            code = str(getattr(exc, "response", {}).get("Error", {}).get("Code", ""))
+                            if code not in {"Throttling", "ThrottlingException", "TooManyRequestsException"} or retry == 3:
+                                raise
+                            time.sleep(2 ** retry)
                     kind = detail["ProcessingResources"]["ClusterConfig"]["InstanceType"]
                     output.active_jobs[kind] = output.active_jobs.get(kind, 0) + 1
+                    output.active_job_names.add(item["ProcessingJobName"])
     except Exception as exc:
         output.warnings.append(f"Active Processing jobs unavailable: {exc}; quota capacity may be overstated")
     if check_checkpoint_host:

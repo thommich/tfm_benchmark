@@ -81,12 +81,52 @@ def test_resume_reconciles_name_before_dispatch_and_preserves_concurrency():
     persist = lambda _: None
     emit = lambda *args, **kwargs: None
     reconcile_submission_intents(state, adapter, persist, emit)
-    account = AccountPreflight("123456789012", {candidate.instance_type: 1}, {candidate.instance_type: 1})
+    account = AccountPreflight("123456789012", {candidate.instance_type: 1},
+                               {candidate.instance_type: 1}, active_job_names={job})
     tokens = restore_tokens(plan, state, account)
     orchestrator_step(plan, state, tokens, adapter, lambda *args: None,
                       lambda *args: {}, persist, emit)
     assert len(state["models"][model.name]["attempts"]) == 1
     assert adapter.submits == 0 and len(tokens.running) == 1
+
+
+def test_resume_does_not_subtract_completed_own_job_from_external_count():
+    plan = plan_sagemaker_baseline(frame(), BenchmarkConfig("id", "target", split_col="split"), settings())
+    state = initial_state(plan, "checksum")
+    model = next(m for m in plan.baseline.models if m.status == "ready")
+    candidate = next(m.candidates[0] for m in plan.models if m.name == model.name)
+    state["models"][model.name]["status"] = "running"
+    state["models"][model.name]["attempts"] = [{"job_name": "completed-own-job",
+                                                   "instance_type": candidate.instance_type}]
+    account = AccountPreflight("123456789012", {candidate.instance_type: 1},
+                               {candidate.instance_type: 1}, active_job_names={"external-job"})
+    tokens = restore_tokens(plan, state, account)
+    assert tokens.preflight.active_jobs[candidate.instance_type] == 1
+    assert not tokens.available(candidate)
+
+
+def test_resume_restores_kms_before_lease_write(tmp_path, monkeypatch):
+    from dataclasses import replace
+    import tabtune_baseline.cloud_runtime as runtime
+    plan = plan_sagemaker_baseline(frame(), BenchmarkConfig("id", "target", split_col="split"),
+                                   replace(settings(), kms_key_id="arn:aws:kms:sa-east-1:123456789012:key/test"))
+    state = initial_state(plan, "checksum")
+    s3 = FakeS3()
+    store = S3RunStore(s3, "s3://bucket/run/1/", kms_key_id=plan.cloud.kms_key_id)
+    store.put_json("plan.json", plan.to_dict())
+    store.put_json("state.json", state)
+    class Session:
+        def client(self, name):
+            assert name == "s3"
+            return s3
+    monkeypatch.setattr(runtime, "_session", lambda region: Session())
+    seen = {}
+    def fake_drive(plan, state, store, session, output_dir):
+        seen["kms"] = store.kms_key_id
+        return object()
+    monkeypatch.setattr(runtime, "_drive", fake_drive)
+    runtime.resume_run(store.run_uri, tmp_path)
+    assert seen["kms"] == plan.cloud.kms_key_id
 
 
 def test_terminal_report_includes_registry_and_deletes_input_after_copy(tmp_path):

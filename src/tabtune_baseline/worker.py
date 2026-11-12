@@ -79,7 +79,7 @@ def _checkpoint_identity(pipeline: Any, model_plan: ModelPlan) -> dict[str, Any]
     if model_plan.name == "TabPFN" and importlib.metadata.version("tabtune") == "0.2.1":
         try:
             from tabtune.models.tabpfn.model_loading import resolve_model_path
-            candidates.insert(0, resolve_model_path(None, "classifier", version="v2.5")[0])
+            candidates.insert(0, resolve_model_path(None, "classifier", version="v2")[0])
         except Exception:
             pass
     for candidate in candidates:
@@ -120,6 +120,13 @@ def execute_model(
     y_val = (df.loc[valid, cfg.target_col] == run_plan.positive_label).astype(int)
     X_ref, y_ref = select_context(X_ref, y_ref, model_plan.context_rows, cfg.seed)
     compatibility = apply_tabtune_compat(model_plan.name) if pipeline_factory is _default_pipeline_factory else None
+    model_params = dict(model_plan.model_params)
+    if model_plan.name in {"Mitra", "MitraV2"}:
+        model_params["use_pretrained_weights"] = True
+    if model_plan.name == "TabPFN" and pipeline_factory is _default_pipeline_factory:
+        # The registry licenses v2, while TabTune 0.2.1 defaults to v2.5.
+        from tabtune.models.tabpfn.model_loading import resolve_model_path
+        model_params["model_path"] = str(resolve_model_path(None, "classifier", version="v2")[0])
     if on_phase:
         on_phase("model_initialization")
     pipeline = pipeline_factory(
@@ -128,7 +135,7 @@ def execute_model(
         tuning_strategy="inference",
         tuning_params=model_plan.tuning_params,
         processor_params=model_plan.processor_params,
-        model_params=model_plan.model_params,
+        model_params=model_params,
         envelope_mode="error",
         license_mode="commercial",
         validate=True,
@@ -172,7 +179,7 @@ def execute_model(
         "positive_label": run_plan.positive_label, "probability_order": order,
         "seconds": round(time.perf_counter() - started, 3),
         "scores_file": str(scores_path), "adaptations": list(model_plan.adaptations) + ([compatibility] if compatibility else []),
-        "model_params": model_plan.model_params, "tuning_params": model_plan.tuning_params,
+        "model_params": model_params, "tuning_params": model_plan.tuning_params,
         "processor_params": model_plan.processor_params, "weights": model_plan.weights,
         "checkpoint": checkpoint,
     }

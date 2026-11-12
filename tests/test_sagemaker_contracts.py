@@ -10,6 +10,7 @@ from tabtune_baseline import BenchmarkConfig, plan_baseline
 from tabtune_baseline import plan_sagemaker_baseline
 from tabtune_baseline.cloud_catalog import processing_catalog, suitable_candidates
 from tabtune_baseline.cloud_preflight import AccountPreflight, filter_quota, inspect_account
+from tabtune_baseline.cloud_planning import estimate_model_resources
 
 
 def settings():
@@ -88,3 +89,42 @@ def test_preflight_reports_inaccessible_account():
             raise RuntimeError("expired SSO grant")
     with pytest.raises(RuntimeError, match="expired SSO grant"):
         inspect_account(settings(), session=Session())
+
+
+def test_vram_estimate_accounts_for_reference_query_interaction():
+    profile = {"dataframe_bytes": 1_000_000, "rows": 100_000,
+               "validation_rows": 10_000}
+    small = estimate_model_resources(profile, 1_000, 100, 1024, "TabICLv2")
+    large = estimate_model_resources(profile, 100_000, 100, 1024, "TabICLv2")
+    assert large["vram_per_gpu_gib"] > small["vram_per_gpu_gib"] + 5
+
+
+def test_preflight_role_path_and_getrole_denial_are_nonfatal():
+    role_names = []
+    class Denied(Exception):
+        response = {"Error": {"Code": "AccessDenied"}}
+    class Client:
+        def __init__(self, service):
+            self.service = service
+        def get_caller_identity(self):
+            return {"Account": "123456789012"}
+        def head_bucket(self, **kwargs):
+            return {}
+        def get_bucket_location(self, **kwargs):
+            return {"LocationConstraint": "sa-east-1"}
+        def get_role(self, *, RoleName):
+            role_names.append(RoleName)
+            raise Denied()
+        def describe_images(self, **kwargs):
+            return {}
+        def get_paginator(self, name):
+            return self
+        def paginate(self, **kwargs):
+            return []
+    class Session:
+        def client(self, service):
+            return Client(service)
+    cloud = replace(settings(), role_arn="arn:aws:iam::123456789012:role/service-role/Benchmark")
+    result = inspect_account(cloud, session=Session(), check_checkpoint_host=False)
+    assert role_names == ["Benchmark"]
+    assert any("cannot be inspected" in warning for warning in result.warnings)
