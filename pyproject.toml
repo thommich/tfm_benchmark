@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tabtune-baseline"
+version = "0.1.0"
+description = "Reproducible zero-shot binary classification baselines with TabTune"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  "tabtune==0.2.1",
+  "pandas>=2.2,<2.4",
+  "numpy>=1.26,<3",
+  "scikit-learn>=1.6,<2",
+  "psutil>=5.9",
+  "pyarrow>=16",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
