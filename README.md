@@ -60,3 +60,43 @@ Each run gets a unique directory containing `report.html`, `results.json`, `mani
 ```
 
 Unit tests use stub pipelines and do not download checkpoints. A real model smoke test is documented in `tests/test_real_smoke.py` and is opt-in because it downloads model weights.
+
+## Optional SageMaker Processing path
+
+The local API above is unchanged. The optional [Studio notebook](notebooks/sagemaker_processing.ipynb) plans on a CPU-only Python 3.11 Studio kernel. It does not load or download checkpoints. GPU Processing jobs use a custom ECR image pinned by digest and the SageMaker Python SDK v2 `ScriptProcessor`; each job downloads its own checkpoint into ephemeral storage.
+
+Install in an isolated Studio environment:
+
+```bash
+python3.11 -m venv .venv-cloud
+.venv-cloud/bin/python -m pip install -e '.[cloud]'
+```
+
+Build the [GPU image](cloud/Dockerfile) in Linux CI or CodeBuild using [the publish script](cloud/build_and_push.sh). The base is pinned by digest and `cloud/requirements-linux-py311.lock` contains transitive hashes. Record the ECR output digest and confirm `pip check`, the image self-test, and one real GPU Processing smoke before a production run. Build checks cannot establish the SageMaker host driver or checkpoint access. The image contains no model weights. SageMaker SDK v2 is in maintenance mode and reaches end of support on **2027-07-06**; the SDK calls are confined to `cloud_adapter.py`.
+
+The Studio caller needs permission to inspect the account, Processing quotas and active jobs, role and ECR digest, and to submit/describe jobs and read CloudWatch Processing logs. It needs read/write/delete access to one **private** S3 prefix in `sa-east-1`. The Processing role needs ECR pull, S3 input/output, CloudWatch logging, and outbound access to checkpoint hosts such as Hugging Face (or a configured private route). If a KMS key is selected, both caller and job role need its S3 encryption permissions. Processing quotas may start at zero; request a per-type increase in Service Quotas. Quota availability does not reserve capacity.
+
+```python
+from tabtune_baseline import (
+    BenchmarkConfig, SageMakerConfig, plan_sagemaker_baseline,
+    run_sagemaker_baseline, resume_sagemaker_baseline,
+)
+
+cloud = SageMakerConfig(
+    role_arn="arn:aws:iam::123456789012:role/your-processing-role",
+    image_uri="123456789012.dkr.ecr.sa-east-1.amazonaws.com/your-repo@sha256:<64 hex characters>",
+    staging_uri="s3://your-private-bucket/tabtune-runs/",
+)
+plan = plan_sagemaker_baseline(df, BenchmarkConfig("id", "target", split_col="split"), cloud)
+for baseline, remote in zip(plan.baseline.models, plan.models):
+    print(baseline.name, baseline.status, baseline.reason, remote.estimate,
+          [(c.instance_type, c.estimated_cost_usd, c.price_source, c.price_at) for c in remote.candidates])
+# After reviewing the plan and replacing the example AWS identifiers:
+result = run_sagemaker_baseline(df, plan, "./baseline-runs")
+# If the Studio process restarts, use the printed run URI:
+result = resume_sagemaker_baseline(result.run_uri, "./baseline-runs")
+```
+
+Planning may query the public AWS Bulk Price List. It falls back to the bundled, dated São Paulo Processing price snapshot when pricing is unavailable. Candidates are ordered by on-demand USD/minute and filtered against estimated CPU RAM, **per-GPU** VRAM, and configured EBS; estimates are conservative but uncalibrated until the real smoke. No spending cap is imposed. The default is three concurrent jobs and one initial started job plus up to four OOM retries per model. The notebook reports status every 60 seconds. Quota/capacity rejections fall through to the next suitable priced type without consuming an attempt. OOM adaptations and every failure appear in `events.jsonl`, `results.json`, and `manifest.json`; an unknown failure is not treated as OOM.
+
+Each run keeps state, attempt outputs, final artifacts and scores under the private S3 run URI. The staged input is deleted only after the run is terminal and the final S3 artifacts have been copied into Studio. A crash or blocked copy retains staged input for `resume_sagemaker_baseline`. A second active notebook monitors without submitting duplicate jobs. The local result is available as `result.local_result` after completion; inspect its `report_html` and `leaderboard()`.

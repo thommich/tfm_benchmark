@@ -46,8 +46,10 @@ def render_report(plan: RunPlan, results: list[dict[str, Any]], run_id: str) -> 
         )
     best = f"{completed[0]['gini']:.4f}" if completed else "—"
     gpu = plan.profile.get("gpu", {})
-    hardware = f"{_s(plan.profile.get('cpu_count'))} CPUs · {plan.profile['ram_total_bytes']/1024**3:.1f} GiB RAM"
-    if gpu.get("available"):
+    hardware = ("Remote SageMaker Processing GPU candidates; see manifest for per-model instance choices"
+                if plan.profile.get("planning_resource") == "remote_candidate_envelope" else
+                f"{_s(plan.profile.get('cpu_count'))} CPUs · {plan.profile['ram_total_bytes']/1024**3:.1f} GiB RAM")
+    if gpu.get("available") and plan.profile.get("planning_resource") != "remote_candidate_envelope":
         hardware += f" · {_s(gpu.get('name'))} ({gpu.get('vram_bytes', 0)/1024**3:.1f} GiB VRAM)"
     split_text = "Explicit train/validation column" if plan.split_source == "explicit" else f"Last three calendar months, cutoff {_s(plan.cutoff)}"
     return f"""<!doctype html>
